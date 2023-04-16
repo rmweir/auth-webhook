@@ -4,7 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/rmweir/role-keeper/pkg/subjectregistrar/auth"
+	v12 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apiserver/pkg/authentication/user"
+	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/kubernetes/pkg/registry/rbac/validation"
 	"net/http"
 	"os"
 
@@ -69,10 +74,26 @@ func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var sr cattlerbacv1.SubjectRegistrar
 	var err error
-	if err = h.client.Get(context.Background(), types.NamespacedName{Name: sar.Spec.User, Namespace: "default"}, &sr); err != nil {
+	if err = h.client.Get(context.TODO(), types.NamespacedName{Name: sar.Spec.User, Namespace: "default"}, &sr); err != nil {
 		return
 	}
 
+	testUser := &user.DefaultInfo{
+		Name:   sar.Spec.User,
+		UID:    sar.Spec.User,
+		Groups: []string{},
+		Extra:  map[string][]string{},
+	}
+
+	ctx := genericapirequest.WithNamespace(genericapirequest.WithUser(r.Context(), testUser), sar.Spec.ResourceAttributes.Namespace)
+	err = validation.ConfirmNoEscalation(ctx, auth.NewSubjectRegistrarRuleResolver(h.client), []v12.PolicyRule{{
+		Verbs:     []string{sar.Spec.ResourceAttributes.Verb},
+		APIGroups: []string{sar.Spec.ResourceAttributes.Group},
+		Resources: []string{sar.Spec.ResourceAttributes.Resource},
+	}})
+	if err != nil {
+		return
+	}
 	// sar.Spec.ResourceAttributes
 	sar.Status.Allowed = true
 	fmt.Printf("ok for: %s\n", sar.String())
